@@ -1,159 +1,132 @@
 import streamlit as st
 import json
-import random
 import os
-from datetime import datetime
 
-# --------------------------------------
-# Load Questions
-# --------------------------------------
-@st.cache_data
-def load_data():
-    files = os.listdir("data")
-    questions = []
-    index = 0
-    for file in files:
-        with open(os.path.join("data", file), "r") as f:
-            Q = json.load(f)
-            topic = " ".join(file.split(".")[0].split("_"))
-            for q in Q:
-                q["id"] = index
-                q["topic"] = topic
-                questions.append(q)
-                index += 1
-    return questions
+# ------------------- PATHS -------------------
+DATA_PATH = "data/descriptive_questions.json"
+PROGRESS_PATH = "data/user_progress.json"
 
-questions = load_data()
-
-# --------------------------------------
-# Sidebar Filters
-# --------------------------------------
-topics = sorted(set(q["topic"] for q in questions))
-difficulties = sorted(set(q["difficulty"] for q in questions))
-
-st.sidebar.title("⚙️ Quiz Settings")
-selected_topic = st.sidebar.selectbox("Filter by Topic", ["All"] + topics)
-selected_difficulty = st.sidebar.selectbox("Filter by Difficulty", ["All"] + difficulties)
-
-if st.sidebar.button("🔄 Reset Filters"):
-    st.session_state.shuffled_questions = None
-    st.session_state.q_index = 0
-    st.session_state.submitted = False
-    st.session_state.selected_option = None
-    st.session_state.score = 0
-    st.session_state.attempted = 0
-    st.session_state.quiz_ended = False
-    st.rerun()
-
-# Filter questions
-filtered_questions = [
-    q for q in questions
-    if (selected_topic == "All" or q["topic"] == selected_topic)
-    and (selected_difficulty == "All" or q["difficulty"] == selected_difficulty)
-]
-
-# --------------------------------------
-# Session State Init
-# --------------------------------------
-if "shuffled_questions" not in st.session_state:
-    st.session_state.shuffled_questions = filtered_questions.copy()
-    random.shuffle(st.session_state.shuffled_questions)
-elif st.session_state.shuffled_questions is None:
-    st.session_state.shuffled_questions = filtered_questions.copy()
-    random.shuffle(st.session_state.shuffled_questions)
-
-for key, default in {
-    "q_index": 0,
-    "submitted": False,
-    "selected_option": None,
-    "score": 0,
-    "attempted": 0,
-    "quiz_ended": False,
-}.items():
-    if key not in st.session_state:
-        st.session_state[key] = default
-
-# --------------------------------------
-# Title + Intro
-# --------------------------------------
-st.markdown(
-    """
-    <div style="text-align:center; padding: 20px; background-color:#f0f2f6; border-radius:12px;">
-        <h1 style="color:#4CAF50;">📊 Data Science Quiz</h1>
-        <p style="font-size:18px;">Sharpen your skills in <b>Machine Learning</b>, <b>Statistics</b>, <b>Deep Learning</b>, and <b>Python</b>.</p>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-st.write("")
-
-# --------------------------------------
-# Main Quiz Logic
-# --------------------------------------
-if not filtered_questions:
-    st.info("No questions match your filters.")
-elif st.session_state.q_index >= len(filtered_questions):
-    st.success("🎉 You’ve completed all available questions.")
-    st.info(f"🏁 Final Score: {st.session_state.score} / {st.session_state.attempted}")
-elif st.session_state.quiz_ended:
-    st.markdown("## 🧾 Quiz Summary")
-    st.write(f"✅ **Score:** {st.session_state.score}")
-    st.write(f"📊 **Questions Attempted:** {st.session_state.attempted}")
-    st.write(f"⏭️ **Questions Skipped:** {st.session_state.q_index - st.session_state.attempted}")
-
-    if st.button("🔄 Restart"):
-        for key in ["shuffled_questions", "q_index", "submitted", "selected_option", "score", "attempted", "quiz_ended"]:
-            st.session_state[key] = None if key == "shuffled_questions" else 0 if isinstance(st.session_state.get(key), int) else False
-        st.rerun()
+# ------------------- LOAD DATA -------------------
+if os.path.exists(DATA_PATH):
+    with open(DATA_PATH, "r", encoding="utf-8") as f:
+        questions = json.load(f)
 else:
-    q = st.session_state.shuffled_questions[st.session_state.q_index]
-    st.markdown(f"###### Topic: **{q['topic']}**  |  Difficulty: **{q['difficulty']}**")
-    st.markdown(f"### {st.session_state.q_index + 1}. {q['question']}")
+    st.error("❌ Could not find data/descriptive_questions.json")
+    st.stop()
 
-    options_map = {f"{k}. {v}": k for k, v in q["options"].items()}
-    selected_display = st.radio(
-        "Select an option:",
-        list(options_map.keys()),
-        key=f"radio_{q['id']}",
-        label_visibility="collapsed",
+# Extract all unique topics
+all_topics = sorted({q["topic"] for q in questions})
+
+# ------------------- LOAD / INIT PROGRESS -------------------
+if os.path.exists(PROGRESS_PATH):
+    with open(PROGRESS_PATH, "r", encoding="utf-8") as f:
+        progress = json.load(f)
+else:
+    progress = {"important": [], "revision": []}
+
+# ------------------- SESSION STATE -------------------
+if "index" not in st.session_state:
+    st.session_state.index = 0
+if "show_answer" not in st.session_state:
+    st.session_state.show_answer = False
+
+# ------------------- HELPER FUNCTIONS -------------------
+def save_progress():
+    with open(PROGRESS_PATH, "w", encoding="utf-8") as f:
+        json.dump(progress, f, indent=2)
+
+def next_question(filtered):
+    if st.session_state.index < len(filtered) - 1:
+        st.session_state.index += 1
+    else:
+        st.session_state.index = 0
+    st.session_state.show_answer = False
+
+def prev_question(filtered):
+    if st.session_state.index > 0:
+        st.session_state.index -= 1
+    else:
+        st.session_state.index = len(filtered) - 1
+    st.session_state.show_answer = False
+
+def toggle_answer():
+    st.session_state.show_answer = not st.session_state.show_answer
+
+def mark_important(qid):
+    if qid not in progress["important"]:
+        progress["important"].append(qid)
+        save_progress()
+
+def mark_revision(qid):
+    if qid not in progress["revision"]:
+        progress["revision"].append(qid)
+        save_progress()
+
+# ------------------- UI -------------------
+st.set_page_config(page_title="DS Question Bank", layout="centered")
+
+st.title("📘 DS Question Bank (Descriptive)")
+
+# Sidebar filters
+st.sidebar.header("🔍 Filters")
+selected_topics = st.sidebar.multiselect(
+    "Select Topics:", options=all_topics, default=all_topics
+)
+
+# Apply filter
+if selected_topics:
+    filtered_questions = [q for q in questions if q["topic"] in selected_topics]
+else:
+    filtered_questions = questions
+
+if not filtered_questions:
+    st.warning("⚠️ No questions found for the selected filters.")
+    st.stop()
+
+# Ensure current index stays in bounds
+st.session_state.index = min(st.session_state.index, len(filtered_questions) - 1)
+
+q = filtered_questions[st.session_state.index]
+
+st.subheader(f"Q{q['id']}: {q['question']}")
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.button("⬅️ Previous", on_click=prev_question, args=(filtered_questions,))
+with col2:
+    st.button("Show/Hide Answer", on_click=toggle_answer)
+with col3:
+    st.button("➡️ Next", on_click=next_question, args=(filtered_questions,))
+
+if st.session_state.show_answer:
+    st.markdown(
+        f"""<div style='padding:10px; background:#f0f8ff; border-radius:10px;'>
+        <b>Answer:</b><br>{q['answer']}
+        </div>""",
+        unsafe_allow_html=True
     )
-    st.session_state.selected_option = options_map[selected_display]
 
-    col1, col2, col3 = st.columns([1, 1, 1])
-    with col1:
-        if st.button("✅ Submit", use_container_width=True):
-            if not st.session_state.submitted:
-                st.session_state.submitted = True
-                st.session_state.attempted += 1
-                if st.session_state.selected_option == q["answer"]:
-                    st.session_state.score += 1
-                    st.success("🎉 Correct! " + q["explanation"])
-                else:
-                    correct_text = q["options"][q["answer"]]
-                    st.error(
-                        f"❌ Incorrect. Correct answer is **{q['answer']}. {correct_text}**\n\n💡 {q['explanation']}"
-                    )
+st.markdown("---")
+col4, col5 = st.columns(2)
+with col4:
+    if st.button("⭐ Mark as Important"):
+        mark_important(q["id"])
+        st.success("Marked as Important")
+with col5:
+    if st.button("📝 Mark for Revision"):
+        mark_revision(q["id"])
+        st.info("Marked for Revision")
 
-    with col2:
-        if not st.session_state.submitted:
-            if st.button("⏭️ Skip", use_container_width=True):
-                st.session_state.q_index += 1
-                st.rerun()
-        else:
-            if st.button("➡️ Next", use_container_width=True):
-                st.session_state.q_index += 1
-                st.session_state.submitted = False
-                st.session_state.selected_option = None
-                st.rerun()
+# ------------------- Sidebar Navigation -------------------
+st.sidebar.header("📑 Navigation")
+st.sidebar.write(f"Question {st.session_state.index+1} of {len(filtered_questions)}")
 
-    with col3:
-        if st.button("🛑 End Quiz", use_container_width=True):
-            st.session_state.quiz_ended = True
-            st.rerun()
+if progress["important"]:
+    st.sidebar.subheader("⭐ Important Questions")
+    for qid in progress["important"]:
+        st.sidebar.write(f"Q{qid}")
 
-    # Show score only AFTER submission
-    if st.session_state.submitted:
-        st.markdown(
-            f"<div style='text-align:center; font-size:18px; margin-top:15px;'>📈 Score: <b>{st.session_state.score}</b> / {st.session_state.attempted}</div>",
-            unsafe_allow_html=True,
-        )
+if progress["revision"]:
+    st.sidebar.subheader("📝 Revision List")
+    for qid in progress["revision"]:
+        st.sidebar.write(f"Q{qid}")
