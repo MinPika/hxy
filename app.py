@@ -3,15 +3,20 @@ import json
 import os
 
 # ------------------- PATHS -------------------
-DATA_PATH = "data/descriptive_questions.json"
-PROGRESS_PATH = "data/user_progress.json"
+DATA_DIR = "data"
+PROGRESS_PATH = os.path.join(DATA_DIR, "user_progress.json")
 
 # ------------------- LOAD DATA -------------------
-if os.path.exists(DATA_PATH):
-    with open(DATA_PATH, "r", encoding="utf-8") as f:
-        questions = json.load(f)
-else:
-    st.error("❌ Could not find data/descriptive_questions.json")
+questions = []
+for filename in os.listdir(DATA_DIR):
+    if filename.endswith(".json") and filename != "user_progress.json":
+        filepath = os.path.join(DATA_DIR, filename)
+        with open(filepath, "r", encoding="utf-8") as f:
+            file_data = json.load(f)
+            questions.extend(file_data)
+
+if not questions:
+    st.error("❌ No questions found in data/ folder")
     st.stop()
 
 # Extract all unique topics
