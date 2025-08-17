@@ -2,65 +2,49 @@ import streamlit as st
 import json
 import os
 
-# ------------------- FILE PATHS -------------------
+# ------------------- PATHS -------------------
 DATA_DIR = "data"
-STATE_DIR = "state"
-os.makedirs(STATE_DIR, exist_ok=True)
+PROGRESS_PATH = os.path.join(DATA_DIR, "user_progress.json")
 
-TOPIC_FILES = {
-    "Python": "Python.json",
-    "Machine Learning": "Machine_Learning.json",
-    "Deep Learning": "Deep_Learning.json",
-    "Statistics": "Statistics.json",
-    "Special": "Special.json"  # NEW
-}
+st.set_page_config(page_title="DS Question Bank", page_icon="📘", layout="centered")
+st.title("📘 DS Question Bank (Descriptive)")
 
-IMPORTANT_FILE = os.path.join(STATE_DIR, "important.json")
-REVISION_FILE = os.path.join(STATE_DIR, "revision.json")
+# ------------------- LOAD ALL QUESTIONS -------------------
+questions = []
+topic_map = {}  # filename -> topic label
 
-# ------------------- HELPERS -------------------
-def load_data():
-    questions = []
-    for topic, filename in TOPIC_FILES.items():
-        filepath = os.path.join(DATA_DIR, filename)
-        if os.path.exists(filepath):
-            with open(filepath, "r", encoding="utf-8") as f:
+for filename in os.listdir(DATA_DIR):
+    if filename.endswith(".json") and filename != "user_progress.json":
+        path = os.path.join(DATA_DIR, filename)
+        base_topic = os.path.splitext(filename)[0].replace("_", " ")
+        topic_map[base_topic] = base_topic  # keep only top-level JSONs
+        try:
+            with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 for q in data:
-                    if topic == "Special":
-                        # Special.json format
-                        questions.append({
-                            "id": f"special-{len(questions)+1}",
-                            "question": q["question"],
-                            "answer": q["answer"],
-                            "explanation": q["answer"],  # fallback
-                            "topic": topic,
-                            "difficulty": "N/A"
-                        })
-                    else:
-                        # Standard format
-                        questions.append({
-                            "id": q["id"],
-                            "question": q["question"],
-                            "answer": q["explanation"],  # use explanation as descriptive answer
-                            "explanation": q["explanation"],
-                            "topic": topic,
-                            "difficulty": q.get("difficulty", "N/A")
-                        })
-    return questions
+                    q["topic"] = base_topic  # force topic from filename
+                questions.extend(data)
+        except Exception as e:
+            st.error(f"Failed to load {filename}: {e}")
 
-def load_state(file_path):
-    if os.path.exists(file_path):
-        with open(file_path, "r") as f:
-            return json.load(f)
-    return []
+if not questions:
+    st.error("❌ No questions found in the data/ folder.")
+    st.stop()
 
-def save_state(file_path, data):
-    with open(file_path, "w") as f:
-        json.dump(data, f)
+# ------------------- LOAD / INIT PROGRESS -------------------
+if os.path.exists(PROGRESS_PATH):
+    try:
+        with open(PROGRESS_PATH, "r", encoding="utf-8") as f:
+            progress = json.load(f)
+    except Exception:
+        progress = {"important": [], "revision": []}
+else:
+    progress = {"important": [], "revision": []}
 
-# ------------------- LOAD DATA -------------------
-all_questions = load_data()
+def save_progress():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    with open(PROGRESS_PATH, "w", encoding="utf-8") as f:
+        json.dump(progress, f, indent=2)
 
 # ------------------- SESSION STATE -------------------
 if "index" not in st.session_state:
@@ -68,94 +52,117 @@ if "index" not in st.session_state:
 if "show_answer" not in st.session_state:
     st.session_state.show_answer = False
 
-# Persistent states
-if "important" not in st.session_state:
-    st.session_state.important = load_state(IMPORTANT_FILE)
-if "revision" not in st.session_state:
-    st.session_state.revision = load_state(REVISION_FILE)
+def next_question(filtered):
+    if not filtered: 
+        return
+    st.session_state.index = (st.session_state.index + 1) % len(filtered)
+    st.session_state.show_answer = False
 
-# ------------------- SIDEBAR FILTERS -------------------
-st.sidebar.title("🔍 Filters")
+def prev_question(filtered):
+    if not filtered:
+        return
+    st.session_state.index = (st.session_state.index - 1) % len(filtered)
+    st.session_state.show_answer = False
 
-topics = st.sidebar.multiselect(
-    "Select Topics:",
-    options=list(TOPIC_FILES.keys()),
-    default=list(TOPIC_FILES.keys())
+def toggle_answer():
+    st.session_state.show_answer = not st.session_state.show_answer
+
+def mark_important(qid):
+    if qid not in progress["important"]:
+        progress["important"].append(qid)
+        save_progress()
+
+def mark_revision(qid):
+    if qid not in progress["revision"]:
+        progress["revision"].append(qid)
+        save_progress()
+
+# ------------------- FILTERS -------------------
+st.sidebar.header("🔍 Filters")
+
+# Topic filter (only JSON names)
+selected_topics = st.sidebar.multiselect(
+    "Topics:",
+    options=list(topic_map.keys()),
+    default=list(topic_map.keys())
 )
 
-difficulties = st.sidebar.multiselect(
-    "Select Difficulty:",
-    options=["Easy", "Medium", "Hard"],
-    default=["Easy", "Medium", "Hard"]
+# Difficulty filter
+difficulties = sorted({q.get("difficulty", "Unknown") for q in questions})
+selected_difficulties = st.sidebar.multiselect(
+    "Difficulty:",
+    options=difficulties,
+    default=difficulties
 )
 
-# ------------------- APPLY FILTERS -------------------
+# Apply filters
 filtered_questions = [
-    q for q in all_questions
-    if q["topic"] in topics and (q["topic"] == "Special" or q["difficulty"] in difficulties)
+    q for q in questions 
+    if q.get("topic") in selected_topics and q.get("difficulty", "Unknown") in selected_difficulties
 ]
 
 if not filtered_questions:
-    st.warning("No questions match the selected filters.")
+    st.warning("⚠️ No questions match your selected filters.")
     st.stop()
 
-# Keep index in range
-if st.session_state.index >= len(filtered_questions):
-    st.session_state.index = 0
+# Keep index in range for current filtered list
+st.session_state.index = min(st.session_state.index, len(filtered_questions) - 1)
 
-current_q = filtered_questions[st.session_state.index]
+# ------------------- CURRENT QUESTION -------------------
+q = filtered_questions[st.session_state.index]
+qid = q.get("id", st.session_state.index + 1)  # fallback if no id
 
-# ------------------- DISPLAY QUESTION -------------------
-st.markdown(f"### ❓ Question {st.session_state.index+1}/{len(filtered_questions)}")
-st.write(current_q["question"])
-st.caption(f"**Topic:** {current_q['topic']} | **Difficulty:** {current_q['difficulty']}")
+st.markdown(f"##### Topic: **{q.get('topic')}** | Difficulty: **{q.get('difficulty','Unknown')}**")
+st.subheader(f"Q{qid}: {q.get('question', '—')}")
 
-# Show Answer
-if st.button("Show Answer"):
-    st.session_state.show_answer = not st.session_state.show_answer
+# Controls
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.button("⬅️ Previous", on_click=prev_question, args=(filtered_questions,))
+with c2:
+    st.button("Show/Hide Answer", on_click=toggle_answer)
+with c3:
+    st.button("➡️ Next", on_click=next_question, args=(filtered_questions,))
 
+# ------------------- ANSWER PANEL (EXPLANATION FIRST) -------------------
 if st.session_state.show_answer:
-    st.markdown("**✅ Answer:**")
-    st.write(current_q["answer"])
-
-# ------------------- ACTION BUTTONS -------------------
-col1, col2, col3, col4 = st.columns(4)
-
-with col1:
-    if st.button("Previous") and st.session_state.index > 0:
-        st.session_state.index -= 1
-        st.session_state.show_answer = False
-
-with col2:
-    if st.button("Next") and st.session_state.index < len(filtered_questions)-1:
-        st.session_state.index += 1
-        st.session_state.show_answer = False
-
-with col3:
-    if current_q["id"] in st.session_state.important:
-        if st.button("⭐ Unmark Important"):
-            st.session_state.important.remove(current_q["id"])
-            save_state(IMPORTANT_FILE, st.session_state.important)
+    explanation = q.get("explanation")
+    if explanation and isinstance(explanation, str) and explanation.strip():
+        answer_text = explanation
     else:
-        if st.button("⭐ Mark Important"):
-            st.session_state.important.append(current_q["id"])
-            save_state(IMPORTANT_FILE, st.session_state.important)
+        ans_key = q.get("answer")
+        opts = q.get("options", {})
+        answer_text = opts.get(ans_key) if isinstance(opts, dict) else None
+        if not answer_text:
+            answer_text = str(ans_key) if ans_key else "No explanation available."
 
-with col4:
-    if current_q["id"] in st.session_state.revision:
-        if st.button("📝 Unmark Revision"):
-            st.session_state.revision.remove(current_q["id"])
-            save_state(REVISION_FILE, st.session_state.revision)
-    else:
-        if st.button("📝 Mark Revision"):
-            st.session_state.revision.append(current_q["id"])
-            save_state(REVISION_FILE, st.session_state.revision)
+    st.markdown(
+        f"""<div style="padding:12px;background:#eef6ff;border-radius:12px;">
+        <b>Answer:</b><br>{answer_text}
+        </div>""",
+        unsafe_allow_html=True
+    )
 
-# ------------------- VIEW MARKED -------------------
-st.sidebar.subheader("⭐ Marked Important")
-for qid in st.session_state.important:
-    st.sidebar.write(f"- {qid}")
+st.markdown("---")
 
-st.sidebar.subheader("📝 Marked for Revision")
-for qid in st.session_state.revision:
-    st.sidebar.write(f"- {qid}")
+# Mark buttons
+m1, m2 = st.columns(2)
+with m1:
+    if st.button("⭐ Mark as Important"):
+        mark_important(qid)
+        st.success("Marked as Important")
+with m2:
+    if st.button("📝 Mark for Revision"):
+        mark_revision(qid)
+        st.info("Marked for Revision")
+
+# ------------------- SIDEBAR NAV -------------------
+st.sidebar.header("📑 Navigation")
+st.sidebar.write(f"Question {st.session_state.index + 1} / {len(filtered_questions)}")
+
+if progress["important"]:
+    st.sidebar.subheader("⭐ Important")
+    st.sidebar.caption(", ".join(f"Q{x}" for x in progress["important"]))
+if progress["revision"]:
+    st.sidebar.subheader("📝 Revision")
+    st.sidebar.caption(", ".join(f"Q{x}" for x in progress["revision"]))
