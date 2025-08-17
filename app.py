@@ -46,6 +46,17 @@ def save_progress():
     with open(PROGRESS_PATH, "w", encoding="utf-8") as f:
         json.dump(progress, f, indent=2)
 
+# ------------------- MARK FUNCTIONS -------------------
+def mark_important(question_text):
+    if question_text not in progress["important"]:
+        progress["important"].append(question_text)
+        save_progress()
+
+def mark_revision(question_text):
+    if question_text not in progress["revision"]:
+        progress["revision"].append(question_text)
+        save_progress()
+
 # ------------------- SESSION STATE -------------------
 if "index" not in st.session_state:
     st.session_state.index = 0
@@ -67,15 +78,6 @@ def prev_question(filtered):
 def toggle_answer():
     st.session_state.show_answer = not st.session_state.show_answer
 
-def mark_important(qid):
-    if qid not in progress["important"]:
-        progress["important"].append(qid)
-        save_progress()
-
-def mark_revision(qid):
-    if qid not in progress["revision"]:
-        progress["revision"].append(qid)
-        save_progress()
 
 # ------------------- FILTERS -------------------
 st.sidebar.header("🔍 Filters")
@@ -145,15 +147,14 @@ if st.session_state.show_answer:
 
 st.markdown("---")
 
-# Mark buttons
 m1, m2 = st.columns(2)
 with m1:
     if st.button("⭐ Mark as Important"):
-        mark_important(qid)
+        mark_important(q.get("question", ""))
         st.success("Marked as Important")
 with m2:
     if st.button("📝 Mark for Revision"):
-        mark_revision(qid)
+        mark_revision(q.get("question", ""))
         st.info("Marked for Revision")
 
 # ------------------- SIDEBAR NAV -------------------
@@ -162,7 +163,10 @@ st.sidebar.write(f"Question {st.session_state.index + 1} / {len(filtered_questio
 
 if progress["important"]:
     st.sidebar.subheader("⭐ Important")
-    st.sidebar.caption(", ".join(f"Q{x}" for x in progress["important"]))
+    for q_text in progress["important"]:
+        st.sidebar.caption(f"• {q_text}")
+
 if progress["revision"]:
     st.sidebar.subheader("📝 Revision")
-    st.sidebar.caption(", ".join(f"Q{x}" for x in progress["revision"]))
+    for q_text in progress["revision"]:
+        st.sidebar.caption(f"• {q_text}")
